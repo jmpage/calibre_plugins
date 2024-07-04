@@ -11,8 +11,12 @@ from six import text_type as unicode
 from calibre.ebooks.metadata import check_isbn
 
 import calibre_plugins.extract_isbn.config as cfg
+from calibre_plugins.extract_isbn.identifier import Identifier, IdentifierContext, IdentifierType
 
-RE_ISBN = re.compile(u'\s*([0-9\-\.–­―—\^ ]{9,18}[0-9xX])', re.UNICODE)
+RE_ISBN = u'(?P<number>[0-9\-\.–­―—\^ ]{9,18}[0-9xX])'
+RE_PARENTHETICAL = u'(?P<parenthetical>\([\w\s]+\))'
+RE_PREFIX = u'(?P<prefix>[\w\s©]*(?:ISBN|LCCN):?)'
+RE_IDENTIFIER = re.compile(u"%s?\s*%s\s*%s?" % (RE_PREFIX, RE_ISBN, RE_PARENTHETICAL), re.UNICODE)
 
 RE_STRIP_STYLE = re.compile(u'<style[^<]+</style>', re.MULTILINE | re.UNICODE)
 RE_STRIP_MARKUP = re.compile(u'<[^>]+>', re.UNICODE)
@@ -48,36 +52,72 @@ class BookScanner(object):
             book_file = unicode(RE_STRIP_STYLE.sub('', book_file))
             book_file = unicode(RE_STRIP_MARKUP.sub('!', book_file))
             #open('E:\\isbn.html', 'wb').write(book_file)
-            if forward:
-                for match in RE_ISBN.finditer(book_file):
-                    txt = match.group(1)
-                    txt = re.sub('\n', '', txt)     # it's possible that because of the pdf formatting the isbn will be spread over multiple lines
-                    self._evaluate_isbn_match(txt)
-            else:
-                matches = RE_ISBN.findall(book_file)
-                for match in reversed(matches):
-                    self._evaluate_isbn_match(match)
+
+            for match in RE_IDENTIFIER.finditer(book_file):
+                self.log.debug('Possible identifier found:', match.groupdict())
+                identifier = self._build_identifier(match.group('prefix'), match.group('number'), match.group('parenthetical'))
+                if self._are_digits_identical(identifier.id):
+                    self.log.debug('Identifier rejected due to repeating digits:', digits)
+                elif not (identifier.id_len == 13 or identifier.id_len == 10):
+                    self.log.debug('Identifier rejected due to incorrect length:', identifier.id_len)
+                elif identifier.id_len == 13 and not self._valid_isbn13(identifier.id):
+                    self.log.debug('Identifier rejected due to invalid isbn13:', identifier.id)
+                elif not check_isbn(identifier.id):
+                    self.log.debug('Identifier rejected as it failed the calibre isbn check:', identifier.id)
+                elif identifier.id_len == 13:
+                    self.log.warn('      Valid ISBN13:', identifier.id)
+                    self.isbns13.append(identifier.id)
+                else:
+                    self.log.warn('      Valid ISBN10:', identifier.id)
+                    self.isbns10.append(identifier.id)
+
             if self.has_identifier():
+                if not forward:
+                    self.isbns10.reverse()
+                    self.isbns13.reverse()
                 break
 
-    def _evaluate_isbn_match(self, original_text):
-        txt = re.sub('[^0-9X]','', original_text)
-        txt_len = len(txt)
-        # Grant - next check for repeating digits like 1111111111
-        # is redundant as of Calibre 0.8, but not exactly
-        # sure which version Kovid changed so rather than dragging
-        # extract isbn dependency forward will repeat here.
-        all_same = re.match(r'(\d)\1{9,12}$', txt)
-        if all_same is None:
-            if txt_len == 10:
-                if check_isbn(txt):
-                    self.log.warn('      Valid ISBN10:', txt)
-                    self.isbns10.append(txt)
-                    return
-            elif txt_len == 13:
-                if txt[:3] in self.valid_isbn13s:
-                    if check_isbn(txt):
-                        self.log.warn('      Valid ISBN13:', txt)
-                        self.isbns13.append(txt)
-                        return
-        self.log.debug('      Invalid ISBN match:', original_text)
+    def _are_digits_identical(self, digits):
+        '''
+        Grant - next check for repeating digits like 1111111111
+        is redundant as of Calibre 0.8, but not exactly
+        sure which version Kovid changed so rather than dragging
+        extract isbn dependency forward will repeat here.
+        '''
+        return re.match(r'(\d)\1{9,12}$', digits) is not None
+
+    def _build_identifier(self, prefix, digits, parenthetical):
+        digits = self._extract_digits(match.group('number'))
+        id_type = self._determine_type(prefix, parenthetical)
+        id_context = self._determine_context(prefix, parenthetical)
+        return Identifier(digits, id_type, id_context)
+
+    def _determine_type(self, prefix, parenthetical):
+        glob = ' '.join([prefix or '', parenthetical or ''])
+        if re.search('isbn', glob, re.IGNORECASE) is not None:
+            return IdentifierType.ISBN
+        elif re.search('lccn', glob, re.IGNORECASE) is not None:
+            return IdentifierType.LCCN
+        else:
+            return IdentifierType.UNKNOWN
+
+    def _determine_context(self, prefix, parenthetical):
+        glob = ' '.join([prefix or '', parenthetical or ''])
+        if re.search('(ebook|digital|eisbn)', glob, re.IGNORECASE) is not None:
+            return IdentifierContext.EBOOK
+        elif re.search('(hardcover|hardback|hb)', glob, re.IGNORECASE) is not None:
+            return IdentifierContext.HARDBACK
+        elif re.search('(paperback|pb)', glob, re.IGNORECASE) is not None:
+            return IdentifierContext.PAPERBACK
+        elif re.search('print', glob, re.IGNORECASE) is not None:
+            return IdentifierContext.PRINT
+        elif re.search('source', glob, re.IGNORECASE) is not None:
+            return IdentifierContext.SOURCE
+        else:
+            return IdentifierContext.UNKNOWN
+
+    def _extract_digits(self, original_text):
+        return re.sub('[^0-9X]','', original_text)
+
+    def _valid_isbn13(self, digits):
+        return digits[:3] in self.valid_isbn13s
