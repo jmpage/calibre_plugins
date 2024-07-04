@@ -58,6 +58,8 @@ class BookScanner(object):
                 identifier = self._build_identifier(match.group('prefix'), match.group('number'), match.group('parenthetical'))
                 if self._are_digits_identical(identifier.id):
                     self.log.debug('Identifier rejected due to repeating digits:', digits)
+                elif identifier.type is not IdentifierType.ISBN and identifier.type is not IdentifierType.UNKNOWN:
+                    self.log.debug('Identifier rejected due to incorrect type:', identifier.type)
                 elif not (identifier.id_len == 13 or identifier.id_len == 10):
                     self.log.debug('Identifier rejected due to incorrect length:', identifier.id_len)
                 elif identifier.id_len == 13 and not self._valid_isbn13(identifier.id):
