@@ -9,11 +9,11 @@ from collections import OrderedDict
 from six import text_type as unicode
 
 try:
-    from qt.core import (QWidget, QGridLayout, QLabel, QLineEdit, QPushButton, QSpinBox, 
+    from qt.core import (Qt, QWidget, QGridLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
                          QCheckBox, QHBoxLayout, QUrl)
 except ImportError:
-    from PyQt5.Qt import (QWidget, QGridLayout, QLabel, QLineEdit, QPushButton, QSpinBox, 
-                         QCheckBox, QHBoxLayout, QUrl)
+    from PyQt5.Qt import (Qt, QWidget, QGridLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
+                          QCheckBox, QHBoxLayout, QUrl)
 
 from calibre.gui2 import open_url
 from calibre.utils.config import JSONConfig
@@ -32,6 +32,7 @@ HELP_URL = 'https://github.com/kiwidude68/calibre_plugins/wiki/Extract-ISBN'
 STORE_NAME = 'Options'
 KEY_VALID_ISBN13_PREFIX = 'validISBN13Prefix'
 KEY_POST_TASK = 'postTask'
+KEY_RANKING_METHOD = 'rankingMethod'
 KEY_WORKER_THRESHOLD = 'workerThreshold'
 KEY_BATCH_SIZE = 'batchSize'
 KEY_DISPLAY_FAILURES = 'displayFailures'
@@ -40,8 +41,16 @@ KEY_ASK_FOR_CONFIRMATION = 'askForConfirmation'
 SHOW_TASKS = OrderedDict([('none', _('Do not change my search')),
                         ('updated', _('Show the books that have new or updated ISBNs'))])
 
+RANKING_METHODS = OrderedDict([('orderFound', _('Prefer first found')),
+                        ('context', _('By context'))])
+RANKING_METHOD_TOOLTIPS = [
+    '(default) Use the first-found ISBN-13 and\nfallback to the first-found ISBN-10',
+    'Classify found ISBNs as belonging to print\neditions, digital editions, etcetera based\non the surrounding context and select\nthe winning ISBN based on preference'
+]
+
 DEFAULT_STORE_VALUES = {
     KEY_POST_TASK: 'none',
+    KEY_RANKING_METHOD: 'orderFound',
     KEY_VALID_ISBN13_PREFIX: ['977', '978', '979'],
     KEY_WORKER_THRESHOLD: 1,
     KEY_BATCH_SIZE: 100,
@@ -78,28 +87,37 @@ class ConfigWidget(QWidget):
         self.isbn13_ledit = QLineEdit(','.join(prefixes), self)
         layout.addWidget(self.isbn13_ledit, 3, 0, 1, 2)
 
+        ranking_method_lbl = QLabel(_('ISBN ranking method:'), self)
+        ranking_method_lbl.setToolTip(_('Determines which ISBN will be selected out of the ones which are found.'))
+        layout.addWidget(ranking_method_lbl, 4, 0, 1, 2)
+        ranking_method = c.get(KEY_RANKING_METHOD, DEFAULT_STORE_VALUES[KEY_RANKING_METHOD])
+        self.rankingMethodCombo = KeyValueComboBox(self, RANKING_METHODS, ranking_method)
+        for index, tooltip in enumerate(RANKING_METHOD_TOOLTIPS):
+            self.rankingMethodCombo.setItemData(index, tooltip, Qt.ItemDataRole.ToolTipRole)
+        layout.addWidget(self.rankingMethodCombo, 5, 0, 1, 2)
+
         lbl = QLabel(_('Selected books before running as a background job:'), self)
         lbl.setToolTip(_('Running as a background job is slower but is the only way to avoid\n') +
                        _('memory leaks and will keep the UI more responsive.'))
-        layout.addWidget(lbl, 4, 0, 1, 1)
+        layout.addWidget(lbl, 6, 0, 1, 1)
         worker_threshold = c.get(KEY_WORKER_THRESHOLD, DEFAULT_STORE_VALUES[KEY_WORKER_THRESHOLD])
         self.threshold_spin = QSpinBox(self)
         self.threshold_spin.setMinimum(0)
         self.threshold_spin.setMaximum(20)
         self.threshold_spin.setProperty('value', worker_threshold)
-        layout.addWidget(self.threshold_spin, 4, 1, 1, 1)
+        layout.addWidget(self.threshold_spin, 6, 1, 1, 1)
 
         batch_lbl = QLabel(_('Batch size running as a background job:'), self)
         batch_lbl.setToolTip(_('Books will be broken into batches to ensure that if you run\n'
                        'extract for a large group you can cancel/close calibre without\n'
                        'losing all of your results as you can cancel the pending groups.'))
-        layout.addWidget(batch_lbl, 5, 0, 1, 1)
+        layout.addWidget(batch_lbl, 7, 0, 1, 1)
         batch_size = c.get(KEY_BATCH_SIZE, DEFAULT_STORE_VALUES[KEY_BATCH_SIZE])
         self.batch_spin = QSpinBox(self)
         self.batch_spin.setMinimum(1)
         self.batch_spin.setMaximum(10000)
         self.batch_spin.setProperty('value', batch_size)
-        layout.addWidget(self.batch_spin, 5, 1, 1, 1)
+        layout.addWidget(self.batch_spin, 7, 1, 1, 1)
 
         display_failures = c.get(KEY_DISPLAY_FAILURES, DEFAULT_STORE_VALUES[KEY_DISPLAY_FAILURES])
         self.display_failures_checkbox = QCheckBox(_('Display failure dialog if ISBN not found or identical'), self)
@@ -107,7 +125,7 @@ class ConfigWidget(QWidget):
                                                         'about no ISBN being found in the book or it is the same as\n'
                                                         'your current value.'))
         self.display_failures_checkbox.setChecked(display_failures)
-        layout.addWidget(self.display_failures_checkbox, 6, 0, 1, 2)
+        layout.addWidget(self.display_failures_checkbox, 8, 0, 1, 2)
 
         ask_for_confirmation = c.get(KEY_ASK_FOR_CONFIRMATION, DEFAULT_STORE_VALUES[KEY_ASK_FOR_CONFIRMATION])
         self.ask_for_confirmation_checkbox = QCheckBox(_('Prompt to apply ISBN changes'), self)
@@ -116,7 +134,7 @@ class ConfigWidget(QWidget):
                                                         'option unchecked that if you are making other changes to\n'
                                                         'this book record at the same time they will be lost.'))
         self.ask_for_confirmation_checkbox.setChecked(ask_for_confirmation)
-        layout.addWidget(self.ask_for_confirmation_checkbox,7, 0, 1, 2)
+        layout.addWidget(self.ask_for_confirmation_checkbox,9, 0, 1, 2)
 
         button_layout = QHBoxLayout()
         keyboard_shortcuts_button = QPushButton(' '+_('Keyboard shortcuts')+'... ', self)
@@ -128,13 +146,14 @@ class ConfigWidget(QWidget):
         help_button.setIcon(get_icon('help.png'))
         help_button.clicked.connect(show_help)
         button_layout.addWidget(help_button)
-        layout.addLayout(button_layout, 8, 0, 1, 2)
+        layout.addLayout(button_layout, 10, 0, 1, 2)
 
     def save_settings(self):
         new_prefs = {}
         new_prefs[KEY_POST_TASK] = self.showCombo.selected_key()
         prefixes = unicode(self.isbn13_ledit.text()).replace(' ','')
         new_prefs[KEY_VALID_ISBN13_PREFIX] = prefixes.split(',')
+        new_prefs[KEY_RANKING_METHOD] = self.rankingMethodCombo.selected_key()
         new_prefs[KEY_WORKER_THRESHOLD] = int(unicode(self.threshold_spin.value()))
         new_prefs[KEY_BATCH_SIZE] = int(unicode(self.batch_spin.value()))
         new_prefs[KEY_DISPLAY_FAILURES] = self.display_failures_checkbox.isChecked()

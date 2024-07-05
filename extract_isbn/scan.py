@@ -22,8 +22,24 @@ RE_IDENTIFIER = re.compile(u"%s?\s*%s\s*%s?" % (RE_PREFIX, RE_ISBN, RE_PARENTHET
 RE_STRIP_STYLE = re.compile(u'<style[^<]+</style>', re.MULTILINE | re.UNICODE)
 RE_STRIP_MARKUP = re.compile(u'<[^>]+>', re.UNICODE)
 
+DEFAULT_PRIORITY = [
+    IdentifierContext.EBOOK,
+    IdentifierContext.HARDBACK,
+    IdentifierContext.PAPERBACK,
+    IdentifierContext.PRINT,
+    IdentifierContext.SOURCE,
+    IdentifierContext.UNKNOWN
+]
+
 def rank_isbn_by_len(identifier, order, forward):
     return (
+        1 if identifier.id_len == 13 else 2,
+        order if forward else order * -1
+    )
+
+def rank_isbn_by_context(identifier, order, forward):
+    return (
+        DEFAULT_PRIORITY.index(identifier.context),
         1 if identifier.id_len == 13 else 2,
         order if forward else order * -1
     )
@@ -36,7 +52,10 @@ class BookScanner(object):
         c = cfg.plugin_prefs[cfg.STORE_NAME]
         self.valid_isbn13s = c.get(cfg.KEY_VALID_ISBN13_PREFIX,
                                    cfg.DEFAULT_STORE_VALUES[cfg.KEY_VALID_ISBN13_PREFIX])
-        self.ranker = rank_isbn_by_len
+        if c.get(cfg.KEY_RANKING_METHOD, cfg.DEFAULT_STORE_VALUES[cfg.KEY_RANKING_METHOD]) == 'context':
+            self.ranker = rank_isbn_by_context
+        else:
+            self.ranker = rank_isbn_by_len
 
     def get_isbn_result(self):
         if not self.identifiers.empty():
