@@ -11,7 +11,7 @@ from calibre.gui2.threaded_jobs import ThreadedJob
 from calibre.utils.config import prefs
 from calibre.utils.ipc.server import Server
 from calibre.utils.ipc.job import ParallelJob
-from calibre.utils.logging import Log
+from calibre.utils.logging import Log, DEBUG
 
 from calibre_plugins.extract_isbn.pdf import get_isbn_from_pdf
 from calibre_plugins.extract_isbn.nonpdf import get_isbn_from_non_pdf
@@ -208,7 +208,7 @@ def do_extract_isbn_for_book_worker(title, paths_for_formats):
     Child job, to extract isbn from formats for this specific book,
     when run as a worker job
     '''
-    log = Log()
+    log = Log(level=DEBUG)
     abort = Event()
     try:
         return scan_for_isbn(log, abort, title, paths_for_formats, in_process=False)
