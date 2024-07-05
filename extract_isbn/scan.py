@@ -7,6 +7,7 @@ import re
 
 # calibre Python 3 compatibility.
 from six import text_type as unicode
+from queue import PriorityQueue
 
 from calibre.ebooks.metadata import check_isbn
 
@@ -21,25 +22,29 @@ RE_IDENTIFIER = re.compile(u"%s?\s*%s\s*%s?" % (RE_PREFIX, RE_ISBN, RE_PARENTHET
 RE_STRIP_STYLE = re.compile(u'<style[^<]+</style>', re.MULTILINE | re.UNICODE)
 RE_STRIP_MARKUP = re.compile(u'<[^>]+>', re.UNICODE)
 
+def rank_isbn_by_len(identifier, order, forward):
+    return (
+        1 if identifier.id_len == 13 else 2,
+        order if forward else order * -1
+    )
+
 class BookScanner(object):
 
     def __init__(self, log):
         self.log = log
-        self.isbns10 = []
-        self.isbns13 = []
+        self.identifiers = PriorityQueue()
         c = cfg.plugin_prefs[cfg.STORE_NAME]
         self.valid_isbn13s = c.get(cfg.KEY_VALID_ISBN13_PREFIX,
                                    cfg.DEFAULT_STORE_VALUES[cfg.KEY_VALID_ISBN13_PREFIX])
+        self.ranker = rank_isbn_by_len
 
     def get_isbn_result(self):
-        if self.isbns13:
-            return self.isbns13[0]
-        elif self.isbns10:
-            return self.isbns10[0]
+        if not self.identifiers.empty():
+            return self.identifiers.get()[1]
         return None
 
     def has_identifier(self):
-        return len(self.isbns13) + len(self.isbns10) > 0
+        return not self.identifiers.empty()
 
     def look_for_identifiers_in_text(self, book_files, forward=True):
         '''
@@ -53,6 +58,7 @@ class BookScanner(object):
             book_file = unicode(RE_STRIP_MARKUP.sub('!', book_file))
             #open('E:\\isbn.html', 'wb').write(book_file)
 
+            order = 0
             for match in RE_IDENTIFIER.finditer(book_file):
                 self.log.debug('Possible identifier found:', match.groupdict())
                 identifier = self._build_identifier(match.group('prefix'), match.group('number'), match.group('parenthetical'))
@@ -66,18 +72,17 @@ class BookScanner(object):
                     self.log.debug('Identifier rejected due to invalid isbn13:', identifier.id)
                 elif not check_isbn(identifier.id):
                     self.log.debug('Identifier rejected as it failed the calibre isbn check:', identifier.id)
-                elif identifier.id_len == 13:
-                    self.log.warn('      Valid ISBN13:', identifier.id)
-                    self.isbns13.append(identifier.id)
                 else:
-                    self.log.warn('      Valid ISBN10:', identifier.id)
-                    self.isbns10.append(identifier.id)
+                    order += 1
+                    self.log.warn('      Valid ISBN:', identifier.id)
+                    self._rank_identifier(identifier, order, forward)
 
             if self.has_identifier():
-                if not forward:
-                    self.isbns10.reverse()
-                    self.isbns13.reverse()
                 break
+
+    def _rank_identifier(self, identifier, order, forward):
+        rank = self.ranker(identifier, order, forward)
+        self.identifiers.put((rank, identifier.id))
 
     def _are_digits_identical(self, digits):
         '''
@@ -88,8 +93,8 @@ class BookScanner(object):
         '''
         return re.match(r'(\d)\1{9,12}$', digits) is not None
 
-    def _build_identifier(self, prefix, digits, parenthetical):
-        digits = self._extract_digits(match.group('number'))
+    def _build_identifier(self, prefix, number, parenthetical):
+        digits = self._extract_digits(number)
         id_type = self._determine_type(prefix, parenthetical)
         id_context = self._determine_context(prefix, parenthetical)
         return Identifier(digits, id_type, id_context)
