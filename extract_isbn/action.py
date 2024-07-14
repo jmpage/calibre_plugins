@@ -11,8 +11,14 @@ from calibre.gui2.dialogs.message_box import ErrorNotification
 
 import calibre_plugins.extract_isbn.config as cfg
 from calibre_plugins.extract_isbn.common_icons import set_plugin_icon_resources, get_icon
+from calibre_plugins.extract_isbn.common_menus import create_menu_action_unique
 from calibre_plugins.extract_isbn.dialogs import QueueProgressDialog
 from calibre_plugins.extract_isbn.jobs import (start_extract_threaded, get_job_details)
+
+try:
+    from qt.core import QToolButton, QMenu
+except ImportError:
+    from PyQt5.Qt import QToolButton, QMenu
 
 try:
     load_translations()
@@ -26,16 +32,25 @@ class ExtractISBNAction(InterfaceAction):
     name = 'Extract ISBN'
     # Create our top-level menu/toolbar action (text, icon_path, tooltip, keyboard shortcut)
     action_spec = (_('Extract ISBN'), None, _('Extract ISBN from the selected book format'), ())
+    popup_type = QToolButton.MenuButtonPopup
     action_type = 'current'
 
     def genesis(self):
+        self.menu = QMenu(self.gui)
+        create_menu_action_unique(self, self.menu, _('&Customize plugin')+'...', 'config.png',
+                                  shortcut=False, triggered=self.show_configuration)
+
         # Read the plugin icons and store for potential sharing with the config widget
         icon_resources = self.load_resources(PLUGIN_ICONS)
         set_plugin_icon_resources(self.name, icon_resources)
 
         # Assign our menu to this action and an icon
+        self.qaction.setMenu(self.menu)
         self.qaction.setIcon(get_icon(PLUGIN_ICONS[0]))
         self.qaction.triggered.connect(self.scan_for_isbns)
+
+    def show_configuration(self):
+        self.interface_action_base_plugin.do_user_config(self.gui)
 
     def scan_for_isbns(self):
         rows = self.gui.library_view.selectionModel().selectedRows()
@@ -113,14 +128,14 @@ class ExtractISBNAction(InterfaceAction):
             msg += _('Click "Show details" to see which books.')
 
         if update_count == 0:
-            if cfg.plugin_prefs[cfg.STORE_NAME].get(cfg.KEY_DISPLAY_FAILURES, 
-                                                    cfg.DEFAULT_STORE_VALUES[cfg.KEY_DISPLAY_FAILURES]):       
+            if cfg.plugin_prefs[cfg.STORE_NAME].get(cfg.KEY_DISPLAY_FAILURES,
+                                                    cfg.DEFAULT_STORE_VALUES[cfg.KEY_DISPLAY_FAILURES]):
                 p = ErrorNotification(job.html_details, _('Scan log'), _('Scan failed'), msg,
                         det_msg=det_msg, show_copy_button=True, parent=self.gui)
                 p.show()
         else:
             payload = (extracted_ids, same_isbn_ids, failed_ids)
-            if cfg.plugin_prefs[cfg.STORE_NAME].get(cfg.KEY_ASK_FOR_CONFIRMATION, 
+            if cfg.plugin_prefs[cfg.STORE_NAME].get(cfg.KEY_ASK_FOR_CONFIRMATION,
                                                     cfg.DEFAULT_STORE_VALUES[cfg.KEY_ASK_FOR_CONFIRMATION]):
                 self.gui.proceed_question(self._check_proceed_with_extracted_isbns,
                         payload, job.html_details,
@@ -145,7 +160,7 @@ class ExtractISBNAction(InterfaceAction):
                 modified.add(title)
 
         if modified:
-            if cfg.plugin_prefs[cfg.STORE_NAME].get(cfg.KEY_ASK_FOR_CONFIRMATION, 
+            if cfg.plugin_prefs[cfg.STORE_NAME].get(cfg.KEY_ASK_FOR_CONFIRMATION,
                                                     cfg.DEFAULT_STORE_VALUES[cfg.KEY_ASK_FOR_CONFIRMATION]):
                 from calibre.utils.icu import lower
 
